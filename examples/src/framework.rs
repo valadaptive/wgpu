@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use wgpu::{Instance, Surface};
+use wgpu::{Instance, Maintain, Surface};
 use winit::{
     dpi::PhysicalSize,
     event::{Event, KeyEvent, StartCause, WindowEvent},
@@ -186,6 +186,8 @@ impl SurfaceWrapper {
         let mut config = surface
             .get_default_config(&context.adapter, width, height)
             .expect("Surface isn't supported by the adapter.");
+        // Reduces judder by 1 frame:
+        // config.desired_maximum_frame_latency = 1;
         if srgb {
             // Not all platforms (WebGPU) support sRGB swapchains, so we need to use view formats
             let view_format = config.format.add_srgb_suffix();
@@ -340,6 +342,7 @@ struct FrameCounter {
     last_printed_instant: web_time::Instant,
     // Number of frames since the last time we printed the frame time.
     frame_count: u32,
+    frame_id: u32,
 }
 
 impl FrameCounter {
@@ -347,14 +350,16 @@ impl FrameCounter {
         Self {
             last_printed_instant: web_time::Instant::now(),
             frame_count: 0,
+            frame_id: 0,
         }
     }
 
     fn update(&mut self) {
         self.frame_count += 1;
+        self.frame_id += 1;
         let new_instant = web_time::Instant::now();
         let elapsed_secs = (new_instant - self.last_printed_instant).as_secs_f32();
-        if elapsed_secs > 1.0 {
+        if true {
             let elapsed_ms = elapsed_secs * 1000.0;
             let frame_time = elapsed_ms / self.frame_count as f32;
             let fps = self.frame_count as f32 / elapsed_secs;
@@ -458,6 +463,9 @@ async fn start<E: Example>(title: &str) {
 
                         frame_counter.update();
 
+                        let frame_id = frame_counter.frame_id;
+                        log::info!("submitted {frame_id}");
+
                         let frame = surface.acquire(&context);
                         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
                             format: Some(surface.config().view_formats[0]),
@@ -469,7 +477,14 @@ async fn start<E: Example>(title: &str) {
                             .unwrap()
                             .render(&view, &context.device, &context.queue);
 
+                        context.queue.on_submitted_work_done(move || {
+                            log::info!("submitted work done {frame_id}");
+                        });
+
                         frame.present();
+
+                        // Reduces the judder to 1 frame's worth:
+                        // context.device.poll(Maintain::wait());
 
                         window_loop.window.request_redraw();
                     }
